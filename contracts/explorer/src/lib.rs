@@ -8,6 +8,7 @@ use soroban_sdk::{
     token, Bytes, BytesN, Env, String, Symbol, Vec,
 };
 
+mod mmr;
 mod state;
 
 #[cfg(kani)]
@@ -48,6 +49,15 @@ pub enum DataKey {
     Admin,
     Role(Address),
     Contract(BytesN<32>),
+    SchemaVersion,
+    MigrationCursor,
+    RegistrationDepositAmount,
+    RegistrationDepositToken,
+    RegistrationTreasury,
+    /// Refundable deposit held for a registry entry.
+    ContractDeposit(BytesN<32>),
+    MmrLeafCount,
+    MmrPeak(u32),
     /// Event log entries use persistent storage so they can be archived and restored.
     /// Keepers must refresh live entries before TTL expiry; restoration of archived
     /// entries requires a RestoreFootprintOp before invoking this contract.
@@ -473,7 +483,7 @@ impl ExplorerContract {
             .instance()
             .set(&DataKey::Role(account.clone()), &role);
         env.events()
-            .publish((symbol_short!("role_grant"), account), role);
+            .publish((symbol_short!("rl_grant"), account), role);
     }
 
     /// Revoke all delegated privileges from an account.
@@ -481,7 +491,7 @@ impl ExplorerContract {
         Self::bump_instance_ttl(&env);
         Self::require_admin(&env, &caller);
         env.storage().instance().remove(&DataKey::Role(account.clone()));
-        env.events().publish((symbol_short!("role_revoke"),), account);
+        env.events().publish((symbol_short!("rl_revoke"),), account);
     }
 
     /// Return the delegated role assigned to an account, if any.
