@@ -1421,12 +1421,12 @@ mod tests {
     }
 
     #[test]
-    fn test_submit_events_crossing_max_events_reverts() {
+    fn test_submit_events_over_max_batch_reverts() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.init(&admin, &5u32);
+        client.init(&admin, &MIN_MAX_EVENTS);
         assert!(client
-            .try_submit_events(&admin, &batch_of(&env, 6))
+            .try_submit_events(&admin, &batch_of(&env, MAX_BATCH + 1))
             .is_err());
         assert_eq!(client.event_count(), 0);
     }
@@ -1828,24 +1828,26 @@ mod tests {
     fn test_ring_buffer_wraps_correctly() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.init(&admin, &5u32);
+        // Filling a full buffer takes more host budget than the default.
+        env.budget().reset_unlimited();
+        client.init(&admin, &MIN_MAX_EVENTS);
         let cid: BytesN<32> = BytesN::from_array(&env, &[10u8; 32]);
         let base = make_input(&env, &cid);
 
-        for _ in 0..5 {
+        for _ in 0..MIN_MAX_EVENTS {
             client.submit_event(&admin, &base);
         }
-        assert_eq!(client.event_count(), 5u64);
+        assert_eq!(client.event_count(), MIN_MAX_EVENTS as u64);
 
         for _ in 0..10 {
             client.submit_event(&admin, &base);
         }
-        assert_eq!(client.event_count(), 5u64);
+        assert_eq!(client.event_count(), MIN_MAX_EVENTS as u64);
 
         let evs = client.get_events(&0u64, &20u32);
-        assert_eq!(evs.len(), 5);
+        assert_eq!(evs.len(), 20);
         assert_eq!(evs.get(0).unwrap().seq, 10);
-        assert_eq!(evs.get(4).unwrap().seq, 14);
+        assert_eq!(evs.get(19).unwrap().seq, 29);
     }
 
     #[test]
@@ -1951,11 +1953,13 @@ mod tests {
     fn test_cap_hit_event_emitted_on_eviction() {
         let (env, client) = setup();
         let admin = Address::generate(&env);
-        client.init(&admin, &5u32);
+        // Filling a full buffer takes more host budget than the default.
+        env.budget().reset_unlimited();
+        client.init(&admin, &MIN_MAX_EVENTS);
         let cid: BytesN<32> = BytesN::from_array(&env, &[23u8; 32]);
         let base = make_input(&env, &cid);
 
-        for _ in 0..5 {
+        for _ in 0..MIN_MAX_EVENTS {
             client.submit_event(&admin, &base);
         }
         let before = env.events().all().len();
@@ -2148,7 +2152,7 @@ mod tests {
     }
 
     #[test]
-    fn test_moderator_can_deregister_but_cannot_pause() {
+    fn test_moderator_cannot_deregister_or_pause() {
         let env = Env::default();
         env.mock_all_auths();
         let id = env.register_contract(None, ExplorerContract);
@@ -2160,8 +2164,10 @@ mod tests {
         client.init(&admin, &1000u32);
         client.grant_role(&admin, &moderator, &Role::Moderator);
         client.register_contract(&admin, &cid, &make_meta(&env, "Moderated", &admin));
-        client.deregister_contract(&moderator, &cid);
-        assert!(client.get_latest_contract(&cid).is_none());
+        // I1: only the admin or the entry owner may deregister, so a moderator
+        // role alone does not grant it.
+        assert!(client.try_deregister_contract(&moderator, &cid).is_err());
+        assert!(client.get_latest_contract(&cid).is_some());
         assert!(client.try_pause(&moderator).is_err());
     }
 
